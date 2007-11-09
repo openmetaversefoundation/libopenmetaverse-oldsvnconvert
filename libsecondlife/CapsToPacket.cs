@@ -176,6 +176,11 @@ namespace libsecondlife.Packets
                         // Just need a bit of manual typecasting love here
                         field.SetValue(block, (byte)(int)blockData[field.Name]);
                     }
+                    else if (fieldType == typeof(short))
+                    {
+                        // Just need a bit of manual typecasting love here
+                        field.SetValue(block, (short)(int)blockData[field.Name]);
+                    }
                     else
                     {
                         field.SetValue(block, blockData[field.Name]);
