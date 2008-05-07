@@ -328,7 +328,7 @@ using System.Collections;
                 return true;
             else 
             {
-                stream.Seek( -1l, SeekOrigin.Current );                    
+                stream.Seek( -1L, SeekOrigin.Current );                    
                 return false;
             }       
         }
@@ -357,7 +357,7 @@ using System.Collections;
             
             if ( found && crrIndex > lastIndexToFind ) 
             {
-                stream.Seek( -1l, SeekOrigin.Current );
+                stream.Seek( -1L, SeekOrigin.Current );
                 return true;
             }
             else 
