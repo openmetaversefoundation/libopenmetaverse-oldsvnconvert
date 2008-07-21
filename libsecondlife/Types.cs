@@ -87,6 +87,15 @@ namespace libsecondlife
             UUID = new Guid(0, 0, 0, BitConverter.GetBytes(val));
         }
 
+        /// <summary>
+        /// Copy constructor
+        /// </summary>
+        /// <param name="val">UUID to copy</param>
+        public LLUUID(LLUUID val)
+        {
+            UUID = val.UUID;
+        }
+
         #endregion Constructors
 
         #region Public Methods
@@ -335,6 +344,7 @@ namespace libsecondlife
     /// <summary>
     /// A two-dimensional vector with floating-point values
     /// </summary>
+    [Serializable]
     public struct LLVector2
     {
         /// <summary>X value</summary>
@@ -342,17 +352,63 @@ namespace libsecondlife
         /// <summary>Y value</summary>
         public float Y;
 
-        #region Constructors
+        // Used for little to big endian conversion on big endian architectures
+        private byte[] conversionBuffer;
+
+        #region Public Methods
 
         /// <summary>
-        /// Constructor, copies a single-precision vector
+        /// Builds a vector from a byte array
         /// </summary>
-        /// <param name="vector">Single-precision vector to copy</param>
-        public LLVector2(LLVector2 vector)
+        /// <param name="byteArray">Byte array containing two four-byte floats</param>
+        /// <param name="pos">Beginning position in the byte array</param>
+        public void FromBytes(byte[] byteArray, int pos)
         {
-            X = vector.X;
-            Y = vector.Y;
+            if (!BitConverter.IsLittleEndian)
+            {
+                // Big endian architecture
+                if (conversionBuffer == null)
+                    conversionBuffer = new byte[8];
+
+                Buffer.BlockCopy(byteArray, pos, conversionBuffer, 0, 8);
+
+                Array.Reverse(conversionBuffer, 0, 4);
+                Array.Reverse(conversionBuffer, 4, 4);
+
+                X = BitConverter.ToSingle(conversionBuffer, 0);
+                Y = BitConverter.ToSingle(conversionBuffer, 4);
+            }
+            else
+            {
+                // Little endian architecture
+                X = BitConverter.ToSingle(byteArray, pos);
+                Y = BitConverter.ToSingle(byteArray, pos + 4);
+            }
         }
+
+        /// <summary>
+        /// Returns the raw bytes for this vector
+        /// </summary>
+        /// <returns>An eight-byte array containing X and Y</returns>
+        public byte[] GetBytes()
+        {
+            byte[] byteArray = new byte[8];
+
+            Buffer.BlockCopy(BitConverter.GetBytes(X), 0, byteArray, 0, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(Y), 0, byteArray, 4, 4);
+
+            if (!BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(byteArray, 0, 4);
+                Array.Reverse(byteArray, 4, 4);
+            }
+
+            return byteArray;
+        }
+
+        #endregion Public Methods
+
+        #region Constructors
 
         /// <summary>
         /// Constructor, builds a vector for individual float values
@@ -361,8 +417,20 @@ namespace libsecondlife
         /// <param name="y">Y value</param>
 		public LLVector2(float x, float y)
 		{
+            conversionBuffer = null;
 			X = x;
 			Y = y;
+        }
+
+        /// <summary>
+        /// Copy constructor
+        /// </summary>
+        /// <param name="vector">Vector to copy</param>
+        public LLVector2(LLVector2 vector)
+        {
+            conversionBuffer = null;
+            X = vector.X;
+            Y = vector.Y;
         }
 
         #endregion Constructors
@@ -406,23 +474,11 @@ namespace libsecondlife
 
         #region Operators
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static bool operator ==(LLVector2 lhs, LLVector2 rhs)
         {
             return (lhs.X == rhs.X && lhs.Y == rhs.Y);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static bool operator !=(LLVector2 lhs, LLVector2 rhs)
         {
             return !(lhs == rhs);
@@ -433,45 +489,26 @@ namespace libsecondlife
             return new LLVector2(lhs.X + rhs.X, lhs.Y + rhs.Y);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
+        public static LLVector2 operator -(LLVector2 vec)
+        {
+            return new LLVector2(-vec.X, -vec.Y);
+        }
+
         public static LLVector2 operator -(LLVector2 lhs, LLVector2 rhs)
         {
             return new LLVector2(lhs.X - rhs.X, lhs.Y - rhs.Y);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="vec"></param>
-        /// <param name="val"></param>
-        /// <returns></returns>
         public static LLVector2 operator *(LLVector2 vec, float val)
         {
             return new LLVector2(vec.X * val, vec.Y * val);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="val"></param>
-        /// <param name="vec"></param>
-        /// <returns></returns>
         public static LLVector2 operator *(float val, LLVector2 vec)
         {
             return new LLVector2(vec.X * val, vec.Y * val);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static LLVector2 operator *(LLVector2 lhs, LLVector2 rhs)
         {
             return new LLVector2(lhs.X * rhs.X, lhs.Y * rhs.Y);
@@ -496,6 +533,7 @@ namespace libsecondlife
     /// <summary>
     /// A three-dimensional vector with floating-point values
     /// </summary>
+    [Serializable]
 	public struct LLVector3
 	{
         /// <summary>X value</summary>
@@ -511,34 +549,9 @@ namespace libsecondlife
         #region Constructors
 
         /// <summary>
-        /// Constructor, copies a single-precision vector
-        /// </summary>
-        /// <param name="vector">Single-precision vector to copy</param>
-        public LLVector3(LLVector3 vector)
-        {
-            conversionBuffer = null;
-            X = vector.X;
-            Y = vector.Y;
-            Z = vector.Z;
-        }
-
-        /// <summary>
-        /// Constructor, builds a single-precision vector from a 
-        /// double-precision one
-        /// </summary>
-        /// <param name="vector">A double-precision vector</param>
-		public LLVector3(LLVector3d vector)
-		{
-            conversionBuffer = null;
-			X = (float)vector.X;
-			Y = (float)vector.Y;
-			Z = (float)vector.Z;
-		}
-
-        /// <summary>
         /// Constructor, builds a vector from a byte array
         /// </summary>
-        /// <param name="byteArray">Byte array containing a 12 byte vector</param>
+        /// <param name="byteArray">Byte array containing three four-byte floats</param>
         /// <param name="pos">Beginning position in the byte array</param>
 		public LLVector3(byte[] byteArray, int pos)
 		{
@@ -559,6 +572,18 @@ namespace libsecondlife
 			X = x;
 			Y = y;
 			Z = z;
+        }
+
+        /// <summary>
+        /// Copy constructor
+        /// </summary>
+        /// <param name="vector">Vector to copy</param>
+        public LLVector3(LLVector3 vector)
+        {
+            conversionBuffer = null;
+            X = (float)vector.X;
+            Y = (float)vector.Y;
+            Z = (float)vector.Z;
         }
 
         #endregion Constructors
@@ -870,6 +895,11 @@ namespace libsecondlife
             return new LLVector3(lhs.X + rhs.X, lhs.Y + rhs.Y, lhs.Z + rhs.Z);
         }
 
+        public static LLVector3 operator -(LLVector3 vec)
+        {
+            return new LLVector3(-vec.X, -vec.Y, -vec.Z);
+        }
+
         public static LLVector3 operator -(LLVector3 lhs, LLVector3 rhs)
         {
             return new LLVector3(lhs.X - rhs.X,lhs.Y - rhs.Y, lhs.Z - rhs.Z);
@@ -931,12 +961,19 @@ namespace libsecondlife
 
         /// <summary>An LLVector3 with a value of 0,0,0</summary>
         public readonly static LLVector3 Zero = new LLVector3();
+        /// <summary>A unit vector facing up (Z axis)</summary>
+        public readonly static LLVector3 Up = new LLVector3(0f, 0f, 1f);
+        /// <summary>A unit vector facing forward (X axis)</summary>
+        public readonly static LLVector3 Fwd = new LLVector3(1f, 0f, 0f);
+        /// <summary>A unit vector facing left (Y axis)</summary>
+        public readonly static LLVector3 Left = new LLVector3(0f, 1f, 0f);
 	}
 
     /// <summary>
     /// A double-precision three-dimensional vector
     /// </summary>
-	public struct LLVector3d
+	[Serializable]
+    public struct LLVector3d
 	{
         /// <summary>X value</summary>
         public double X;
@@ -986,6 +1023,18 @@ namespace libsecondlife
             conversionBuffer = null;
             X = Y = Z = 0;
             FromBytes(byteArray, pos);
+        }
+
+        /// <summary>
+        /// Copy constructor
+        /// </summary>
+        /// <param name="vector">Vector to copy</param>
+        public LLVector3d(LLVector3d vector)
+        {
+            conversionBuffer = null;
+            X = vector.X;
+            Y = vector.Y;
+            Z = vector.Z;
         }
 
         #endregion Constructors
@@ -1089,6 +1138,35 @@ namespace libsecondlife
             return Math.Sqrt(xd * xd + yd * yd + zd * zd);
         }
 
+        /// <summary>
+        /// Generate an LLVector3d from a string
+        /// </summary>
+        /// <param name="val">A string representation of a 3D vector, enclosed 
+        /// in arrow brackets and separated by commas</param>
+        public static LLVector3d Parse(string val)
+        {
+            char[] splitChar = { ',' };
+            string[] split = val.Replace("<", String.Empty).Replace(">", String.Empty).Split(splitChar);
+            return new LLVector3d(
+                double.Parse(split[0].Trim(), Helpers.EnUsCulture),
+                double.Parse(split[1].Trim(), Helpers.EnUsCulture),
+                double.Parse(split[2].Trim(), Helpers.EnUsCulture));
+        }
+
+        public static bool TryParse(string val, out LLVector3d result)
+        {
+            try
+            {
+                result = Parse(val);
+                return true;
+            }
+            catch (Exception)
+            {
+                result = new LLVector3d();
+                return false;
+            }
+        }
+
         #endregion Static Methods
 
         #region Overrides
@@ -1129,26 +1207,62 @@ namespace libsecondlife
 
         #region Operators
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static bool operator ==(LLVector3d lhs, LLVector3d rhs)
         {
             return (lhs.X == rhs.X && lhs.Y == rhs.Y && lhs.Z == rhs.Z);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static bool operator !=(LLVector3d lhs, LLVector3d rhs)
         {
             return !(lhs == rhs);
+        }
+
+        public static LLVector3d operator +(LLVector3d lhs, LLVector3d rhs)
+        {
+            return new LLVector3d(lhs.X + rhs.X, lhs.Y + rhs.Y, lhs.Z + rhs.Z);
+        }
+
+        public static LLVector3d operator -(LLVector3d vec)
+        {
+            return new LLVector3d(-vec.X, -vec.Y, -vec.Z);
+        }
+
+        public static LLVector3d operator -(LLVector3d lhs, LLVector3d rhs)
+        {
+            return new LLVector3d(lhs.X - rhs.X, lhs.Y - rhs.Y, lhs.Z - rhs.Z);
+        }
+
+        public static LLVector3d operator *(LLVector3d vec, float val)
+        {
+            return new LLVector3d(vec.X * val, vec.Y * val, vec.Z * val);
+        }
+
+        public static LLVector3d operator *(double val, LLVector3d vec)
+        {
+            return new LLVector3d(vec.X * val, vec.Y * val, vec.Z * val);
+        }
+
+        public static LLVector3d operator *(LLVector3d lhs, LLVector3d rhs)
+        {
+            return new LLVector3d(lhs.X * rhs.X, lhs.Y * rhs.Y, lhs.Z * rhs.Z);
+        }
+
+        public static LLVector3d operator /(LLVector3d lhs, LLVector3d rhs)
+        {
+            return new LLVector3d(lhs.X / rhs.X, lhs.Y / rhs.Y, lhs.Z / rhs.Z);
+        }
+
+        public static LLVector3d operator /(LLVector3d vec, double val)
+        {
+            return new LLVector3d(vec.X / val, vec.Y / val, vec.Z / val);
+        }
+
+        public static LLVector3d operator %(LLVector3d lhs, LLVector3d rhs)
+        {
+            return new LLVector3d(
+                lhs.Y * rhs.Z - rhs.Y * lhs.Z,
+                lhs.Z * rhs.X - rhs.Z * lhs.X,
+                lhs.X * rhs.Y - rhs.X * lhs.Y);
         }
 
         #endregion Operators
@@ -1160,7 +1274,8 @@ namespace libsecondlife
     /// <summary>
     /// A four-dimensional vector
     /// </summary>
-	public struct LLVector4
+	[Serializable]
+    public struct LLVector4
 	{
         /// <summary></summary>
         public float X;
@@ -1202,6 +1317,19 @@ namespace libsecondlife
             conversionBuffer = null;
             X = Y = Z = S = 0;
             FromBytes(byteArray, pos);
+        }
+
+        /// <summary>
+        /// Copy constructor
+        /// </summary>
+        /// <param name="vector">Vector to copy</param>
+        public LLVector4(LLVector4 vector)
+        {
+            conversionBuffer = null;
+            X = vector.X;
+            Y = vector.Y;
+            Z = vector.Z;
+            S = vector.S;
         }
 
         #endregion Constructors
@@ -1301,6 +1429,31 @@ namespace libsecondlife
 
         #region Static Methods
 
+        public static LLVector4 Parse(string val)
+        {
+            char[] splitChar = { ',' };
+            string[] split = val.Replace("<", String.Empty).Replace(">", String.Empty).Split(splitChar);
+            return new LLVector4(
+                float.Parse(split[0].Trim(), Helpers.EnUsCulture),
+                float.Parse(split[1].Trim(), Helpers.EnUsCulture),
+                float.Parse(split[2].Trim(), Helpers.EnUsCulture),
+                float.Parse(split[3].Trim(), Helpers.EnUsCulture));
+        }
+
+        public static bool TryParse(string val, out LLVector4 result)
+        {
+            try
+            {
+                result = Parse(val);
+                return true;
+            }
+            catch (Exception)
+            {
+                result = new LLVector4();
+                return false;
+            }
+        }
+
         #endregion Static Methods
 
         #region Overrides
@@ -1338,23 +1491,11 @@ namespace libsecondlife
 
         #region Operators
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static bool operator ==(LLVector4 lhs, LLVector4 rhs)
         {
             return (lhs.X == rhs.X && lhs.Y == rhs.Y && lhs.Z == rhs.Z && lhs.S == rhs.S);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static bool operator !=(LLVector4 lhs, LLVector4 rhs)
         {
             return !(lhs == rhs);
@@ -1365,45 +1506,26 @@ namespace libsecondlife
             return new LLVector4(lhs.X + rhs.X, lhs.Y + rhs.Y, lhs.Z + rhs.Z, lhs.S + rhs.S);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
+        public static LLVector4 operator -(LLVector4 vec)
+        {
+            return new LLVector4(-vec.X, -vec.Y, -vec.Z, -vec.S);
+        }
+
         public static LLVector4 operator -(LLVector4 lhs, LLVector4 rhs)
         {
             return new LLVector4(lhs.X - rhs.X, lhs.Y - rhs.Y, lhs.Z - rhs.Z, lhs.S - rhs.S);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="vec"></param>
-        /// <param name="val"></param>
-        /// <returns></returns>
         public static LLVector4 operator *(LLVector4 vec, float val)
         {
             return new LLVector4(vec.X * val, vec.Y * val, vec.Z * val, vec.S * val);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="val"></param>
-        /// <param name="vec"></param>
-        /// <returns></returns>
         public static LLVector4 operator *(float val, LLVector4 vec)
         {
             return new LLVector4(vec.X * val, vec.Y * val, vec.Z * val, vec.S * val);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static LLVector4 operator *(LLVector4 lhs, LLVector4 rhs)
         {
             return new LLVector4(lhs.X * rhs.X, lhs.Y * rhs.Y, lhs.Z * rhs.Z, lhs.S * rhs.S);
@@ -1428,6 +1550,7 @@ namespace libsecondlife
     /// <summary>
     /// An 8-bit color structure including an alpha channel
     /// </summary>
+    [Serializable]
     public struct LLColor
     {
         /// <summary>Red</summary>
@@ -1482,6 +1605,18 @@ namespace libsecondlife
         {
             R = G = B = A = 0f;
             FromBytes(byteArray, pos, inverted, alphaInverted);
+        }
+
+        /// <summary>
+        /// Copy constructor
+        /// </summary>
+        /// <param name="color">Color to copy</param>
+        public LLColor(LLColor color)
+        {
+            R = color.R;
+            G = color.G;
+            B = color.B;
+            A = color.A;
         }
 
         #endregion Constructors
@@ -1675,7 +1810,8 @@ namespace libsecondlife
     /// <summary>
     /// A quaternion, used for rotations
     /// </summary>
-	public struct LLQuaternion
+	[Serializable]
+    public struct LLQuaternion
 	{
         /// <summary>X value</summary>
         public float X;
@@ -1689,12 +1825,27 @@ namespace libsecondlife
         // Used for little to big endian conversion on big endian architectures
         private byte[] conversionBuffer;
 
+        #region Properties
+
+        /// <summary>
+        /// Returns the conjugate (spatial inverse) of this quaternion
+        /// </summary>
+        public LLQuaternion Conjugate
+        {
+            get
+            {
+                return new LLQuaternion(-this.X, -this.Y, -this.Z, this.W);
+            }
+        }
+
+        #endregion Properties
+
         #region Constructors
 
         /// <summary>
         /// Constructor, builds a quaternion object from a byte array
         /// </summary>
-        /// <param name="byteArray">The source byte array</param>
+        /// <param name="byteArray">Byte array containing four four-byte floats</param>
         /// <param name="pos">Offset in the byte array to start reading at</param>
         /// <param name="normalized">Whether the source data is normalized or
         /// not. If this is true 12 bytes will be read, otherwise 16 bytes will
@@ -1749,6 +1900,19 @@ namespace libsecondlife
             conversionBuffer = null;
             X = Y = Z = W = 0f;
             SetQuaternion(angle, vec);
+        }
+
+        /// <summary>
+        /// Copy constructor
+        /// </summary>
+        /// <param name="quaternion">Quaternion to copy</param>
+        public LLQuaternion(LLQuaternion quaternion)
+        {
+            conversionBuffer = null;
+            X = quaternion.X;
+            Y = quaternion.Y;
+            Z = quaternion.Z;
+            W = quaternion.W;
         }
 
         #endregion Constructors
@@ -2029,6 +2193,41 @@ namespace libsecondlife
             return q;
         }
 
+        public static LLQuaternion Parse(string val)
+        {
+            char[] splitChar = { ',' };
+            string[] split = val.Replace("<", String.Empty).Replace(">", String.Empty).Split(splitChar);
+            if (split.Length == 3)
+            {
+                return new LLQuaternion(
+                    float.Parse(split[0].Trim(), Helpers.EnUsCulture),
+                    float.Parse(split[1].Trim(), Helpers.EnUsCulture),
+                    float.Parse(split[2].Trim(), Helpers.EnUsCulture));
+            }
+            else
+            {
+                return new LLQuaternion(
+                    float.Parse(split[0].Trim(), Helpers.EnUsCulture),
+                    float.Parse(split[1].Trim(), Helpers.EnUsCulture),
+                    float.Parse(split[2].Trim(), Helpers.EnUsCulture),
+                    float.Parse(split[3].Trim(), Helpers.EnUsCulture));
+            }
+        }
+
+        public static bool TryParse(string val, out LLQuaternion result)
+        {
+            try
+            {
+                result = Parse(val);
+                return true;
+            }
+            catch (Exception)
+            {
+                result = new LLQuaternion();
+                return false;
+            }
+        }
+
         #endregion Static Methods
 
         #region Overrides
@@ -2069,31 +2268,19 @@ namespace libsecondlife
 
         #region Operators
 
-        /// <summary>
-        /// Comparison operator
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static bool operator ==(LLQuaternion lhs, LLQuaternion rhs)
         {
             // Return true if the fields match:
             return lhs.X == rhs.X && lhs.Y == rhs.Y && lhs.Z == rhs.Z && lhs.W == rhs.W;
         }
 
-        /// <summary>
-        /// Not comparison operator
-        /// </summary>
-        /// <param name="lhs"></param>
-        /// <param name="rhs"></param>
-        /// <returns></returns>
         public static bool operator !=(LLQuaternion lhs, LLQuaternion rhs)
         {
             return !(lhs == rhs);
         }
 
         /// <summary>
-        /// Multiplication operator
+        /// Performs quaternion multiplication
         /// </summary>
         /// <param name="lhs"></param>
         /// <param name="rhs"></param>
@@ -2125,19 +2312,12 @@ namespace libsecondlife
 
         /// <summary>An LLQuaternion with a value of 0,0,0,1</summary>
         public readonly static LLQuaternion Identity = new LLQuaternion(0f, 0f, 0f, 1f);
-
-        public LLQuaternion Conjugate
-        {
-            get
-            {
-                return new LLQuaternion(-this.X, -this.Y, -this.Z, this.W);
-            }
-        }
 	}
 
     /// <summary>
-    /// 
+    /// A 3x3 matrix
     /// </summary>
+    [Serializable]
     public struct LLMatrix3
     {
         public float M11, M12, M13;
@@ -2180,6 +2360,22 @@ namespace libsecondlife
             M33 = m33;
         }
 
+        public LLMatrix3(LLQuaternion q)
+        {
+            this = q.ToMatrix();
+        }
+
+        //FIXME:
+        //public LLMatrix3(float roll, float pitch, float yaw)
+        //{
+        //    M11 = M12 = M13 = M21 = M22 = M23 = M31 = M32 = M33 = 0f;
+        //    FromEulers(roll, pitch, yaw);
+        //}
+
+        /// <summary>
+        /// Copy constructor
+        /// </summary>
+        /// <param name="m">Matrix to copy</param>
         public LLMatrix3(LLMatrix3 m)
         {
             M11 = m.M11;
@@ -2192,18 +2388,6 @@ namespace libsecondlife
             M32 = m.M32;
             M33 = m.M33;
         }
-
-        public LLMatrix3(LLQuaternion q)
-        {
-            this = q.ToMatrix();
-        }
-
-        //FIXME:
-        //public LLMatrix3(float roll, float pitch, float yaw)
-        //{
-        //    M11 = M12 = M13 = M21 = M22 = M23 = M31 = M32 = M33 = 0f;
-        //    FromEulers(roll, pitch, yaw);
-        //}
 
         #endregion Constructors
 

@@ -79,7 +79,7 @@ namespace libsecondlife
     /// <summary>
     /// The level of shininess applied to a face
     /// </summary>
-    public enum Shininess
+    public enum Shininess : byte
     {
         /// <summary></summary>
         None = 0,
@@ -94,7 +94,7 @@ namespace libsecondlife
     /// <summary>
     /// The texture mapping style used for a face
     /// </summary>
-    public enum MappingType
+    public enum MappingType : byte
     {
         /// <summary></summary>
         Default = 0,
@@ -914,13 +914,15 @@ namespace libsecondlife
                 #endregion Texture
 
                 #region Color
-                binWriter.Write(DefaultTexture.RGBA.GetBytes());
+                // Serialize the color bytes inverted to optimize for zerocoding
+                binWriter.Write(DefaultTexture.RGBA.GetBytes(true));
                 for (int i = 0; i < rgbas.Length; i++)
                 {
                     if (rgbas[i] != UInt32.MaxValue)
                     {
                         binWriter.Write(GetFaceBitfieldBytes(rgbas[i]));
-                        binWriter.Write(FaceTextures[i].RGBA.GetBytes());
+                        // Serialize the color bytes inverted to optimize for zerocoding
+                        binWriter.Write(FaceTextures[i].RGBA.GetBytes(true));
                     }
                 }
                 binWriter.Write((byte)0);
