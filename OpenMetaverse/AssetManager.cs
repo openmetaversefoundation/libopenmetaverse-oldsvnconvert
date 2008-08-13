@@ -1424,6 +1424,415 @@ namespace OpenMetaverse
         #endregion Image Callbacks
     }
 
+    public class XferRequest
+    {
+    }
+
+    public abstract class TransferRequest
+    {
+        public delegate void Progress(TransferRequest request, StatusCode status, int received, int size);
+        public event Progress OnProgress;
+        public delegate void Complete(TransferRequest request, AssetType type, UUID assetID, byte[] data);
+        public event Complete OnComplete;
+        public delegate void Error(TransferRequest request, StatusCode error);
+        public event Error OnError;
+
+        private volatile bool _InProgress;
+        /// <summary>
+        /// <code>true</code> if the transfer is in progress, <code>false</code> otherwise.
+        /// </summary>
+        public bool InProgress
+        {
+            get { return _InProgress; }
+            private set { _InProgress = value; }
+        }
+
+        /// <summary>
+        /// <code>true</code> if the transfer successfully completed, <code>false</code> otherwise.
+        /// </summary>
+        public bool Done
+        {
+            get { return Status == StatusCode.Done && Size == BytesReceived; }
+        }
+
+        private StatusCode _Status;
+        public StatusCode Status
+        {
+            get { return _Status; }
+            private set { _Status = value; }
+        }
+
+        /// <summary>
+        /// Total size of the asset data. This is -1 if we don't know
+        /// for certain.
+        /// </summary>
+        public int Size
+        {
+            get { return HeaderReceived ? AssetData.Length : -1; }
+        }
+
+        private int _BytesReceived;
+        /// <summary>
+        /// Number of bytes of asset data that have been received.
+        /// </summary>
+        public int BytesReceived
+        {
+            get { return _BytesReceived; }
+            private set { _BytesReceived = value; }
+        }
+
+        /// <summary>
+        /// AssetData array. Please don't modify this. 
+        /// If you REALLY want to fuck with the gods, lock the
+        /// TransferRequest beforehand. The safe way to get at this
+        /// is to wait for the <seealso cref="OnComplete"/> event
+        /// to fire.
+        /// </summary>
+        public byte[] AssetData;
+
+        /// <summary>
+        /// Provided by the subclass, in constructor or in <seealso cref="DecodeInfoParamsField"/>
+        /// </summary>
+        protected abstract AssetType Type { get; }
+        /// <summary>
+        /// Provided by the subclass, in constructor or in <seealso cref="DecodeInfoParamsField"/>
+        /// </summary>
+        protected abstract UUID AssetID { get; }
+
+        /// <summary>
+        /// Property of the subclass.
+        /// </summary>
+        protected abstract SourceType Source { get; }
+
+        private volatile bool HeaderReceived;
+        private NetworkManager Network;
+        private UUID TransferID = UUID.Zero;
+        private float Priority;
+        
+
+        public TransferRequest(NetworkManager network, bool priority)
+        {
+            Network = network;
+            Priority = 100.0f + (priority ? 1.0f : 0.0f);
+        }
+
+        #region Callback Registration
+        private NetworkManager.PacketCallback TransferInfoCallback;
+        private NetworkManager.PacketCallback TransferPacketCallback;
+
+        private void RegisterNetworkCallbacks()
+        {
+            if (TransferInfoCallback == null)
+            {
+                TransferInfoCallback = new NetworkManager.PacketCallback(TransferInfoHandler);
+                Network.RegisterCallback(PacketType.TransferInfo, TransferInfoCallback);
+            }
+            if (TransferPacketCallback == null)
+            {
+                TransferPacketCallback = new NetworkManager.PacketCallback(TransferPacketHandler);
+                Network.RegisterCallback(PacketType.TransferPacket, TransferPacketCallback);
+            }
+        }
+
+        private void UnregisterNetworkCallbacks()
+        {
+            if (TransferInfoCallback != null)
+            {
+                Network.UnregisterCallback(PacketType.TransferInfo, TransferInfoCallback);
+                TransferInfoCallback = null;
+            }
+            if (TransferPacketCallback != null)
+            {
+                Network.UnregisterCallback(PacketType.TransferPacket, TransferPacketCallback);
+                TransferPacketCallback = null;
+            }
+        }
+        #endregion Callback Registration
+
+        /// <summary>
+        /// Starts the tranfer.
+        /// </summary>
+        public void Start()
+        {
+            InProgress = true;
+            HeaderReceived = false;
+            AssetData = null;
+            BytesReceived = 0;
+            Status = StatusCode.Unknown;
+            TransferID = UUID.Random();
+
+            RegisterNetworkCallbacks();
+            TransferRequestPacket packet = new TransferRequestPacket();
+            packet.TransferInfo.ChannelType = (int)ChannelType.Asset;
+            packet.TransferInfo.SourceType = (int)Source;
+            packet.TransferInfo.TransferID = TransferID;
+            packet.TransferInfo.Priority = Priority;
+            packet.TransferInfo.Params = ConstructRequestParamsField();
+            Network.SendPacket(packet);
+            Logger.DebugLog("Sent TransferRequestPacket.");
+        }
+
+        /// <summary>
+        /// Aborts the transfer if it is currently in progress.
+        /// </summary>
+        public void Stop()
+        {
+            if (InProgress)
+            {
+                TransferAbortPacket abort = new TransferAbortPacket();
+                abort.TransferInfo.ChannelType = (int)ChannelType.Asset;
+                abort.TransferInfo.TransferID = TransferID;
+            }
+            InProgress = false;
+        }
+
+        #region Packet Callbacks
+        /// <summary>
+        /// NetworkManager callback for TransferInfoPacket, 
+        /// receives metadata concerning the transfer, the most important
+        /// of which is the total size of the transfer. 
+        /// </summary>
+        /// <param name="packet">TransferInfoPacket</param>
+        /// <param name="sim">Simulator packet was sent from.</param>
+        private void TransferInfoHandler(Packet packet, Simulator sim)
+        {
+            TransferInfoPacket info = packet as TransferInfoPacket;
+            if (info.TransferInfo.TransferID != TransferID)
+                return;
+            Status = (StatusCode)info.TransferInfo.Status;
+            if (Status == StatusCode.OK)
+            {
+                if (!HeaderReceived)
+                {
+                    // NetworkManager callbacks may happen in their own threads
+                    // so we need to aquire a lock to access the AssetData array.
+                    lock (this)
+                    {
+                        if (BytesReceived > 0)
+                        {
+                            // Shit, we got data before the header.
+                            if (AssetData.Length < info.TransferInfo.Size)
+                            {
+                                // Copy it into the real buffer.
+                                byte[] oldData = AssetData;
+                                AssetData = new byte[info.TransferInfo.Size];
+                                Buffer.BlockCopy(oldData, 0, AssetData, 0, BytesReceived);
+                            }
+                        }
+                        else
+                        {
+                            AssetData = new byte[info.TransferInfo.Size];
+                        }
+                    }
+                }
+                HeaderReceived = true;
+            }
+            else if (Status != StatusCode.Done)
+            {
+                // Transfer has errored out, abort it.
+                Stop(); // FIXME: Is this necessary?
+                InProgress = false;
+                if (OnError != null)
+                {
+                    try { OnError(this, Status); }
+                    catch (Exception e) { Logger.Log(e.Message, Helpers.LogLevel.Error, e); }
+                }
+            }
+        }
+
+        /// <summary>
+        /// NetworkManager callback for TransferPacketPacket, which
+        /// cointains the actual binary asset data. Ideally, this should 
+        /// be called after TransferInfoHandler receives the first 
+        /// TransferInfoPacket.
+        /// </summary>
+        /// <param name="packet">TransferPacketPacket</param>
+        /// <param name="sim">Simulator packet sent from</param>
+        private void TransferPacketHandler(Packet packet, Simulator sim)
+        {
+            TransferPacketPacket asset = packet as TransferPacketPacket;
+            if (asset.TransferData.TransferID != TransferID)
+                return;
+
+            if (!InProgress) // The transfer was aborted.
+                return;
+
+            Status = (StatusCode)asset.TransferData.Status;
+            // NetworkManager callbacks may happen in their own threads
+            // so we need to aquire a lock to access the AssetData array.
+            lock (this)
+            {
+                if (!HeaderReceived)
+                {
+                    if (AssetData == null)
+                    {
+                        // Shit, we haven't received the header.
+                        // Make a temporary buffer.
+                        AssetData = new byte[asset.TransferData.Data.Length];
+                    }
+                    else if (BytesReceived + asset.TransferData.Data.Length > AssetData.Length)
+                    {
+                        // SHIT we STILL haven't received the header. WTF asset server!?
+                        // Make the temp buffer bigger.
+                        byte[] oldData = AssetData;
+                        AssetData = new byte[BytesReceived + asset.TransferData.Data.Length];
+                        Buffer.BlockCopy(oldData, 0, AssetData, 0, BytesReceived);
+                    }
+                }
+
+                Buffer.BlockCopy(asset.TransferData.Data, 0, AssetData, BytesReceived, asset.TransferData.Data.Length);
+                BytesReceived += asset.TransferData.Data.Length;
+            }
+            if (Status == StatusCode.OK)
+            {
+                if (OnProgress != null)
+                {
+                    try { OnProgress(this, Status, BytesReceived, Size); }
+                    catch (Exception e) { Logger.Log(e.Message, Helpers.LogLevel.Error, e); }
+                }
+            }
+            else if (Status == StatusCode.Done)
+            {
+                if (OnComplete != null)
+                {
+                    try { OnComplete(this, Type, AssetID, AssetData); }
+                    catch (Exception e) { Logger.Log(e.Message, Helpers.LogLevel.Error, e); }
+                }
+            }
+            else
+            {
+                // FIXME: Redundant?
+                if (OnError != null)
+                {
+                    try { OnError(this, Status); }
+                    catch (Exception e) { Logger.Log(e.Message, Helpers.LogLevel.Error, e); }
+                }
+            }
+        }
+        #endregion Packet Callbacks
+
+        /// <summary>
+        /// Constructs the TransferRequestPacket.TransferInfo.Params byte[].
+        /// </summary>
+        /// <returns>byte[] populated with asset request info</returns>
+        protected abstract byte[] ConstructRequestParamsField();
+
+        /// <summary>
+        /// Decodes the TransferInfoPacket.TransferInfo.Params data.
+        /// </summary>
+        /// <param name="infoParams">TransferInfoPacket data</param>
+        protected abstract void DecodeInfoParamsField(byte[] infoParams);
+    }
+
+    public class InventoryAssetTransferRequest : TransferRequest
+    {
+        private AssetType _Type;
+        protected override AssetType Type
+        {
+            get { return _Type; }
+        }
+
+        private UUID _AssetID;
+        protected override UUID AssetID
+        {
+            get { return _AssetID; }
+        }
+
+        private UUID ItemID;
+        private UUID TaskID;
+        private UUID OwnerID;
+        private UUID SessionID;
+        private UUID AgentID;
+
+        protected override SourceType Source
+        {
+            get { return SourceType.SimInventoryItem; }
+        }
+
+        public InventoryAssetTransferRequest(NetworkManager network, UUID sessionID, UUID agentID, UUID itemID, UUID ownerID, AssetType type, bool priority)
+            : this(network, sessionID, agentID, UUID.Zero, itemID, UUID.Zero, ownerID, type, priority) { }
+        
+        public InventoryAssetTransferRequest(NetworkManager network, UUID sessionID, UUID agentID, UUID assetID, UUID itemID, UUID taskID, UUID ownerID, AssetType type, bool priority)
+            : base(network, priority)
+        {
+            _AssetID = assetID;
+            ItemID = itemID;
+            TaskID = taskID;
+            OwnerID = ownerID;
+            _Type = type;
+            SessionID = sessionID;
+            AgentID = agentID;
+        }
+
+        protected override byte[] ConstructRequestParamsField()
+        {
+            byte[] paramField = new byte[100];
+            Buffer.BlockCopy(AgentID.GetBytes(), 0, paramField, 0, 16);
+            Buffer.BlockCopy(SessionID.GetBytes(), 0, paramField, 16, 16);
+            Buffer.BlockCopy(OwnerID.GetBytes(), 0, paramField, 32, 16);
+            Buffer.BlockCopy(TaskID.GetBytes(), 0, paramField, 48, 16);
+            Buffer.BlockCopy(ItemID.GetBytes(), 0, paramField, 64, 16);
+            Buffer.BlockCopy(AssetID.GetBytes(), 0, paramField, 80, 16);
+            Buffer.BlockCopy(Helpers.IntToBytes((int)Type), 0, paramField, 96, 4);
+            return paramField;
+        }
+
+        protected override void DecodeInfoParamsField(byte[] infoParams)
+        {
+            if (infoParams.Length == 100)
+            {
+                AgentID = new UUID(infoParams, 0);
+                SessionID = new UUID(infoParams, 16);
+                OwnerID = new UUID(infoParams, 32);
+                TaskID = new UUID(infoParams, 48);
+                ItemID = new UUID(infoParams, 64);
+                _AssetID = new UUID(infoParams, 80);
+                _Type = (AssetType)(sbyte)infoParams[96];
+            }
+        }
+    }
+
+    public class AssetTransferRequest : TransferRequest
+    {
+        private AssetType _Type;
+        protected override AssetType Type
+        {
+            get { return _Type; }
+        }
+
+        private UUID _AssetID;
+        protected override UUID AssetID
+        {
+            get { return _AssetID; }
+        }
+
+        protected override SourceType Source
+        {
+            get { return SourceType.Asset; }
+        }
+
+        public AssetTransferRequest(NetworkManager network, UUID assetID, AssetType type, bool priority)
+            : base (network, priority)
+        {
+            _AssetID = assetID;
+            _Type = type;
+        }
+
+        protected override byte[] ConstructRequestParamsField()
+        {
+            byte[] paramField = new byte[20];
+            Array.Copy(AssetID.GetBytes(), 0, paramField, 0, 16);
+            Array.Copy(Helpers.IntToBytes((int)Type), 0, paramField, 16, 4);
+            return paramField;
+        }
+
+        protected override void DecodeInfoParamsField(byte[] infoParams)
+        {
+            _AssetID = new UUID(infoParams, 0);
+            _Type = (AssetType)(sbyte)infoParams[16];
+        }
+    }
+
     #region Texture Cache
     /// <summary>
     /// Class that handles the local image cache
